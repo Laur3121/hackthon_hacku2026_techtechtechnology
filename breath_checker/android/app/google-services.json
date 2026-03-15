@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "533010108429",
+    "firebase_url": "https://hackthon-techtechtechnology-default-rtdb.firebaseio.com",
+    "project_id": "hackthon-techtechtechnology",
+    "storage_bucket": "hackthon-techtechtechnology.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:533010108429:android:acd100f8fff2cb083dc544",
+        "android_client_info": {
+          "package_name": "com.example.breath_checker"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "533010108429-p9fopujc99cpfu528l0dmad6k9pe6llq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDzro4LMXDwcVujZ4D-46EFBZLUNpePmc4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "533010108429-p9fopujc99cpfu528l0dmad6k9pe6llq.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
