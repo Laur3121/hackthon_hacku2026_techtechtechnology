@@ -192,17 +192,96 @@ class _MeasureScreenState extends State<MeasureScreen> {
 }
 
 // ==========================================================
-// 3. バトル画面（土台）
+// 3. バトル画面
 // ==========================================================
-class BattleScreen extends StatelessWidget {
+class Enemy {
+  final String name;
+  final String imagePath;
+  final int maxHp;
+
+  Enemy({
+    required this.name,
+    required this.imagePath,
+    required this.maxHp,
+  });
+}
+
+class BattleScreen extends StatefulWidget {
   const BattleScreen({super.key});
 
   @override
+  State<BattleScreen> createState() => _BattleScreenState();
+}
+
+class _BattleScreenState extends State<BattleScreen> {
+  // 【追加】敵の配列（リスト）
+  // ここに何パターンでも敵を追加できます！
+  final List<Enemy> _enemies = [
+    Enemy(name: 'むしばきん', imagePath: 'assets/リアルなちいさいかわいいドラゴン.png', maxHp: 100),
+    Enemy(name: 'よごれスライム', imagePath: 'assets/リアルなかわいいドラゴン.png', maxHp: 150),
+    Enemy(name: 'ボス・シコウ', imagePath: 'assets/かっこいいドラゴン（黒色）.png', maxHp: 500),
+  ];
+
+  // 現在戦っている敵のインデックス（配列の何番目か）
+  int _currentIndex = 0;
+  // 現在のHP
+  late int _currentHp;
+
+  @override
+  void initState() {
+    super.initState();
+    // 画面が開いたときに、最初の敵のHPをセットする
+    _currentHp = _enemies[_currentIndex].maxHp;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 現在の敵のデータを取得
+    final currentEnemy = _enemies[_currentIndex];
+
     return Scaffold(
       appBar: AppBar(title: const Text('⚔️ バトル')),
-      body: const Center(
-        child: Text('ここに戦闘画面を作っていきます！', style: TextStyle(fontSize: 20)),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // 【変更箇所】配列から敵の名前を呼び出して表示
+            Text(
+              '${currentEnemy.name} が あらわれた！',
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 30),
+
+            // 【変更箇所】配列から画像のパスを呼び出して表示
+            Image.asset(
+              currentEnemy.imagePath,
+              width: 200,
+              height: 200,
+              fit: BoxFit.contain,
+              errorBuilder: (context, exception, stackTrace) {
+                print('【画像エラー】: $exception');
+                return SizedBox(
+                  width: 200,
+                  height: 200,
+                  child: Center(
+                    child: Text(
+                      '${currentEnemy.name}の\n画像が見つかりません',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 30),
+            
+            // 【変更箇所】変数から現在のHPと最大HPを表示
+            Text(
+              '敵のHP: $_currentHp / ${currentEnemy.maxHp}',
+              style: const TextStyle(fontSize: 20, color: Colors.redAccent, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
       ),
     );
   }
