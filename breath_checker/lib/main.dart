@@ -24,7 +24,6 @@ class ToothbrushBattleApp extends StatelessWidget {
       ),
       home: const HomeScreen(),
       routes: {
-        // ここで const を外して定義します
         '/battle': (context) => const BattleScreen(),
         '/measure': (context) => const MeasureScreen(),
         '/history': (context) => const HistoryScreen(),
@@ -55,11 +54,23 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 20),
             const Text('息をキレイにして敵を倒せ！', style: TextStyle(fontSize: 20)),
             const SizedBox(height: 50),
-            _buildMenuButton(context, title: '⚔️ バトル開始', icon: Icons.sports_esports, color: Colors.redAccent, routeName: '/battle'),
+            _buildMenuButton(context, 
+                title: '⚔️ バトル開始', 
+                icon: Icons.sports_esports, 
+                color: Colors.redAccent, 
+                routeName: '/battle'),
             const SizedBox(height: 20),
-            _buildMenuButton(context, title: '📊 数値チェック', icon: Icons.analytics_outlined, color: Colors.orangeAccent, routeName: '/measure'),
+            _buildMenuButton(context, 
+                title: '📊 数値チェック', 
+                icon: Icons.analytics_outlined, 
+                color: Colors.orangeAccent, 
+                routeName: '/measure'),
             const SizedBox(height: 20),
-            _buildMenuButton(context, title: '📜 履歴', icon: Icons.history_edu, color: Colors.greenAccent, routeName: '/history'),
+            _buildMenuButton(context, 
+                title: '📜 履歴', 
+                icon: Icons.history_edu, 
+                color: Colors.greenAccent, 
+                routeName: '/history'),
           ],
         ),
       ),
@@ -73,7 +84,10 @@ class HomeScreen extends StatelessWidget {
       child: ElevatedButton.icon(
         icon: Icon(icon, color: Colors.white),
         label: Text(title, style: const TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
-        style: ElevatedButton.styleFrom(backgroundColor: color, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color, 
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
+        ),
         onPressed: () => Navigator.pushNamed(context, routeName),
       ),
     );
@@ -81,7 +95,7 @@ class HomeScreen extends StatelessWidget {
 }
 
 // ==========================================================
-// 2. 数値チェック画面（生データを表示）
+// 2. 数値チェック画面（ESP32からの全データを表示）
 // ==========================================================
 class MeasureScreen extends StatefulWidget {
   const MeasureScreen({super.key});
@@ -92,16 +106,24 @@ class MeasureScreen extends StatefulWidget {
 
 class _MeasureScreenState extends State<MeasureScreen> {
   final DatabaseReference _dbRef = FirebaseDatabase.instance.ref('sensor');
-  int _rawValue = 0; 
+  
+  double _temp = 0.0;
+  double _hum = 0.0;
+  double _gas = 0.0;
+  double _diff = 0.0;
 
   @override
   void initState() {
     super.initState();
-    // ESP32側でFirebaseに送るキー名を 'rawValue' に想定しています
-    _dbRef.child('rawValue').onValue.listen((DatabaseEvent event) {
+    // JSON全体を監視してパースする
+    _dbRef.onValue.listen((DatabaseEvent event) {
       if (mounted && event.snapshot.value != null) {
+        final data = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
         setState(() {
-          _rawValue = int.parse(event.snapshot.value.toString());
+          _temp = double.parse(data['temperature'].toString());
+          _hum  = double.parse(data['humidity'].toString());
+          _gas  = double.parse(data['gas_resistance'].toString());
+          _diff = double.parse(data['diff_percent'].toString());
         });
       }
     });
@@ -111,21 +133,57 @@ class _MeasureScreenState extends State<MeasureScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('📊 数値チェック')),
-      body: Center(
+      body: SingleChildScrollView(
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('現在のセンサー数値', style: TextStyle(fontSize: 24)),
-            const SizedBox(height: 10),
+            const SizedBox(height: 30),
+            const Text('汚れ度 (変化率)', style: TextStyle(fontSize: 20)),
             Text(
-              '$_rawValue',
-              style: const TextStyle(fontSize: 120, fontWeight: FontWeight.bold, color: Colors.blue),
+              '${_diff.toStringAsFixed(1)}%',
+              style: TextStyle(
+                fontSize: 80, 
+                fontWeight: FontWeight.bold, 
+                color: _diff > 20 ? Colors.red : Colors.blue
+              ),
+            ),
+            const Divider(height: 50),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _infoCard('温度', '${_temp.toStringAsFixed(1)}℃', Icons.thermostat),
+                  _infoCard('湿度', '${_hum.toStringAsFixed(1)}%', Icons.water_drop),
+                ],
+              ),
             ),
             const SizedBox(height: 20),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 40),
-              child: Text('※この数値が低いほど、息がクリーンな状態です。', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
+            _infoCard('ガス抵抗値', '${_gas.toStringAsFixed(1)} kΩ', Icons.air),
+            const SizedBox(height: 40),
+            Text(
+              _diff > 20 ? '⚠️ 空気が汚れています！換気か歯磨きを！' : '✅ 空気はクリーンです',
+              style: TextStyle(
+                fontWeight: FontWeight.bold, 
+                color: _diff > 20 ? Colors.red : Colors.green
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoCard(String label, String value, IconData icon) {
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Icon(icon, color: Colors.blueAccent),
+            const SizedBox(height: 8),
+            Text(label, style: const TextStyle(fontSize: 14)),
+            Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
