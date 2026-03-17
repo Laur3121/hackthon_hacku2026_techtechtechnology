@@ -1,0 +1,13 @@
+# Mac固有の不要ファイル
+.DS_Store
+
+# Pythonのキャッシュ
+__pycache__/
+*.py[cod]
+.venv/
+
+# 秘密鍵（Firebase / Google Cloud）
+*.json
+
+# ただし、requirements.txtなどは除外しない
+!requirements.txt
