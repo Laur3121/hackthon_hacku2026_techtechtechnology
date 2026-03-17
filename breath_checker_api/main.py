@@ -10,14 +10,20 @@ from sqlalchemy.orm import sessionmaker
 
 app = FastAPI()
 
-# --- 1. Cloud SQL 接続情報 (ここにメモした情報を入れる) ---
+# --- 1. Cloud SQL 接続情報 ---
 DB_USER = "postgres"
 DB_PASS = "techtech"
-DB_IP   = "104.198.121.0"
-DB_NAME = "postgres" # または作成したDB名
+DB_NAME = "postgres"
+INSTANCE_CONNECTION_NAME = "project-0e144c7b-cccb-412b-883:asia-northeast1:hachthon-hacku2026" # Cloud SQL概要ページからコピー
 
-# SQLAlchemy用の接続文字列
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_IP}/{DB_NAME}"
+# 実行環境が Cloud Run かどうかで接続先を切り替える
+if os.getenv("K_SERVICE"):
+    # Cloud Run環境（Unixソケット経由）
+    DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_NAME}?host=/cloudsql/{INSTANCE_CONNECTION_NAME}"
+else:
+    # ローカル環境（パブリックIP経由）
+    DB_IP = "104.198.121.0"
+    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_IP}/{DB_NAME}"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
