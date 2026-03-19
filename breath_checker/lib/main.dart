@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart';
-// ここで分けたファイルをインポートする
+import 'firebase_options.dart'; // これは lib 直下にあるはずです
 import 'screens/home_screen.dart';
 import 'screens/measure_screen.dart';
 import 'screens/battle_screen.dart';
@@ -19,13 +18,19 @@ class ToothbrushBattleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: '歯磨きバトル',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
+      ),
       initialRoute: '/',
       routes: {
         '/': (context) => const HomeScreen(),
-        '/battle': (context) => const BattleScreen(),
-        '/measure': (context) => const MeasureScreen(),
-        '/history': (context) => const HistoryScreen(),
+        '/battle': (context) => BattleScreen(),   // constを外す
+        '/measure': (context) => MeasureScreen(), // constを外す
+        '/history': (context) => HistoryScreen(), // constを外す
       },
+      debugShowCheckedModeBanner: false,
     );
   }
 }
