@@ -12,39 +12,66 @@ class _LoginScreenState extends State<LoginScreen> {
   final _auth = FirebaseAuth.instance;
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  
   bool _isLoading = false;
+  String? _passwordError;
 
-  // ゲストログイン（匿名認証）
+  @override
+  void initState() {
+    super.initState();
+    _passwordController.addListener(_validatePassword);
+  }
+
+  void _validatePassword() {
+    final pass = _passwordController.text;
+    setState(() {
+      if (pass.isEmpty) {
+        _passwordError = null;
+      } else if (pass.length < 6) {
+        _passwordError = "パスワードは6文字以上必要です";
+      } else {
+        _passwordError = null;
+      }
+    });
+  }
+
+  // --- 1. ゲストログイン ---
   Future<void> _signInAnonymously() async {
     setState(() => _isLoading = true);
     try {
       await _auth.signInAnonymously();
-      if (mounted) {
-        // ログイン成功後、メイン画面へ移動（ルート名は自分の設定に合わせてください）
-        Navigator.pushReplacementNamed(context, '/home');
-      }
+      if (mounted) Navigator.pushReplacementNamed(context, '/home');
     } catch (e) {
-      _showErrorDialog("ゲストログインに失敗しました: $e");
+      _showErrorDialog("ゲストログインに失敗しました。Firebaseの設定を確認してください。");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // メールアドレスでサインアップ/ログイン（簡易版）
+  // --- 2. メールログイン / 自動新規登録 ---
   Future<void> _signInWithEmail() async {
-    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) return;
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.length < 6) return;
     
     setState(() => _isLoading = true);
     try {
-      // 既存ユーザーならログイン、いなければ新規登録する流れが一般的ですが、
-      // ここではシンプルにサインインを試みます
-      await _auth.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
+      // ログインを試行
+      await _auth.signInWithEmailAndPassword(email: email, password: password);
       if (mounted) Navigator.pushReplacementNamed(context, '/home');
     } on FirebaseAuthException catch (e) {
-      _showErrorDialog("ログインエラー: ${e.message}");
+      // ユーザーが存在しない場合は、その場で新規登録
+      if (e.code == 'user-not-found' || e.code == 'invalid-credential' || e.code == 'user-disabled') {
+        try {
+          await _auth.createUserWithEmailAndPassword(email: email, password: password);
+          if (mounted) Navigator.pushReplacementNamed(context, '/home');
+        } catch (signUpError) {
+          _showErrorDialog("新規登録に失敗しました。メール形式を確認してください。");
+        }
+      } else {
+        _showErrorDialog("エラー: ${e.message}");
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -54,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("エラー"),
+        title: const Text("注意"),
         content: Text(message),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK")),
@@ -65,28 +92,32 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    bool isButtonEnabled = _emailController.text.isNotEmpty && 
+                          _passwordController.text.length >= 6 && 
+                          !_isLoading;
+
     return Scaffold(
+      backgroundColor: Colors.white,
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // アプリロゴ的なもの
               const Icon(Icons.auto_fix_high, size: 80, color: Colors.blue),
               const SizedBox(height: 16),
-              const Text(
-                "歯磨きバトルRPG",
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-              ),
+              const Text("歯磨きバトルRPG", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
               const SizedBox(height: 40),
 
               // メールアドレス入力
               TextField(
                 controller: _emailController,
-                decoration: const InputDecoration(
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
                   labelText: "メールアドレス",
-                  border: OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.email),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  hintText: "example@test.com",
                 ),
                 keyboardType: TextInputType.emailAddress,
               ),
@@ -95,50 +126,59 @@ class _LoginScreenState extends State<LoginScreen> {
               // パスワード入力
               TextField(
                 controller: _passwordController,
-                decoration: const InputDecoration(
-                  labelText: "パスワード",
-                  border: OutlineInputBorder(),
-                ),
                 obscureText: true,
+                decoration: InputDecoration(
+                  labelText: "パスワード",
+                  errorText: _passwordError,
+                  prefixIcon: const Icon(Icons.lock),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  helperText: "※6文字以上の英数字を入力してください",
+                ),
               ),
               const SizedBox(height: 24),
 
-              // ログインボタン
+              // メインログインボタン
               SizedBox(
                 width: double.infinity,
-                height: 50,
+                height: 55,
                 child: ElevatedButton(
-                  onPressed: _isLoading ? null : _signInWithEmail,
-                  child: const Text("ログイン / 新規登録"),
+                  onPressed: isButtonEnabled ? _signInWithEmail : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    disabledBackgroundColor: Colors.grey.shade300,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _isLoading 
+                    ? const CircularProgressIndicator(color: Colors.white) 
+                    : const Text("ログイン / 新規登録", style: TextStyle(color: Colors.white, fontSize: 18)),
                 ),
               ),
               
-              const SizedBox(height: 16),
-              const Text("または"),
-              const SizedBox(height: 16),
+              const SizedBox(height: 30),
+              
+              const Text("または", style: TextStyle(color: Colors.grey)),
+              
+              const SizedBox(height: 10),
 
               // ゲストログインボタン
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: OutlinedButton(
-                  onPressed: _isLoading ? null : _signInAnonymously,
-                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.blue)),
-                  child: _isLoading 
-                    ? const CircularProgressIndicator() 
-                    : const Text("ゲストとして体験する（登録不要）"),
+              TextButton(
+                onPressed: _isLoading ? null : _signInAnonymously,
+                child: const Text(
+                  "ゲストとして体験する（登録不要）", 
+                  style: TextStyle(color: Colors.blue, fontSize: 16, decoration: TextDecoration.underline),
                 ),
-              ),
-              
-              const SizedBox(height: 20),
-              const Text(
-                "※ゲストの場合、データはブラウザを閉じると消える場合があります",
-                style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 }
