@@ -2,6 +2,7 @@ import os
 import datetime
 import threading
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware  # これを追加
 import firebase_admin
 from firebase_admin import credentials, db
 from sqlalchemy import create_engine, Column, Integer, Float, DateTime
@@ -9,6 +10,14 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],    # すべてのドメインからのアクセスを許可
+    allow_methods=["*"],    # すべてのメソッド（GET, POST等）を許可
+    allow_headers=["*"],    # すべてのヘッダーを許可
+)
+
 
 # --- 1. Cloud SQL 接続情報 ---
 DB_USER = "postgres"
