@@ -150,7 +150,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  // --- グラフ表示（修正済） ---
+// --- グラフ表示（日付表示 & 丸を大きく調整） ---
   Widget _buildChartView() {
     if (battleLogs.length < 2) {
       return const Center(child: Text("グラフを表示するには少なくとも2回以上の戦闘が必要です"));
@@ -167,29 +167,59 @@ class _HistoryScreenState extends State<HistoryScreen> {
       child: LineChart(
         key: const ValueKey("chart"),
         LineChartData(
+          minY: 0, // 0以下に突き抜けないように固定
           lineBarsData: [
-            // LineChartBarData（単数形）に修正
             LineChartBarData(
               spots: damageSpots,
-              isCurved: true,
+              isCurved: false,
               color: Colors.redAccent,
               barWidth: 4,
               isStrokeCapRound: true,
-              dotData: const FlDotData(show: true),
+              // ★ 丸（ドット）の設定を大きく変更
+              dotData: FlDotData(
+                show: true,
+                getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(
+                  radius: 6, // 丸のサイズ（前より大きく）
+                  color: Colors.white,
+                  strokeWidth: 3,
+                  strokeColor: Colors.redAccent,
+                ),
+              ),
               belowBarData: BarAreaData(show: true, color: Colors.redAccent.withOpacity(0.1)),
             ),
           ],
-          titlesData: const FlTitlesData(
-            leftTitles: AxisTitles(
+          titlesData: FlTitlesData(
+            leftTitles: const AxisTitles(
               axisNameWidget: Text("ダメージ量"),
-              sideTitles: SideTitles(showTitles: true, reservedSize: 40),
+              sideTitles: SideTitles(showTitles: true, reservedSize: 45),
             ),
+            // ★ 横軸に時間を表示
             bottomTitles: AxisTitles(
-              axisNameWidget: Text("戦闘回数（左が古い）"),
-              sideTitles: SideTitles(showTitles: false),
+              axisNameWidget: const Text("戦闘日時"),
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 30,
+                interval: 1, // すべての点にラベルを表示（データが多い場合は調整が必要）
+                getTitlesWidget: (value, meta) {
+                  int index = value.toInt();
+                  if (index >= 0 && index < sortedLogs.length) {
+                    final DateTime date = DateTime.parse(sortedLogs[index]['created_at']).toLocal();
+                    // 「12/05 14:30」のような形式で表示
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        DateFormat('MM/dd\nHH:mm').format(date),
+                        style: const TextStyle(fontSize: 8, color: Colors.grey),
+                        textAlign: TextAlign.center,
+                      ),
+                    );
+                  }
+                  return const Text('');
+                },
+              ),
             ),
-            rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           ),
           gridData: const FlGridData(show: true, drawVerticalLine: false),
           borderData: FlBorderData(show: true, border: Border.all(color: Colors.grey.shade300)),

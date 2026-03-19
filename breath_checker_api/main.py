@@ -34,13 +34,23 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# 履歴テーブル (PostgreSQLは「記録」のために残す)
+# 生データ履歴テーブル
 class BreathHistory(Base):
     __tablename__ = "breath_history"
     id = Column(Integer, primary_key=True, index=True)
     temperature = Column(Float)
     humidity = Column(Float)
     gas_resistance = Column(Float)
+    diff_percent = Column(Float)
+    created_at = Column(DateTime, default=datetime.datetime.now)
+
+# 戦闘ログテーブル
+class BattleLog(Base):
+    __tablename__ = "battle_log"
+    id = Column(Integer, primary_key=True, index=True)
+    world = Column(Integer)
+    stage = Column(Integer)
+    damage = Column(Integer)
     diff_percent = Column(Float)
     created_at = Column(DateTime, default=datetime.datetime.now)
 
@@ -57,7 +67,6 @@ if not firebase_admin._apps:
 
 @app.get("/game-status")
 def get_status():
-    """Firebaseから最新のゲーム状況を取得"""
     ref = db.reference('game_status')
     data = ref.get()
     if not data:
@@ -66,10 +75,32 @@ def get_status():
 
 @app.post("/attack")
 def attack_enemy(damage: int):
-    """Firebaseのデータを更新して攻撃処理を行う"""
+    """攻撃処理：PostgreSQLに保存し、FirebaseのHPを減らす"""
     ref = db.reference('game_status')
     status = ref.get() or {"world": 1, "stage": 1, "current_hp": 100, "max_hp": 100}
     
+    # 1. PostgreSQLに戦闘ログを保存
+    db_session = SessionLocal()
+    try:
+        # センサーの最新値も取得して保存
+        sensor_ref = db.reference('/sensor')
+        sensor_data = sensor_ref.get() or {}
+        
+        new_log = BattleLog(
+            world=status.get("world", 1),
+            stage=status.get("stage", 1),
+            damage=damage,
+            diff_percent=sensor_data.get('diff_percent', 0),
+            created_at=datetime.datetime.now()
+        )
+        db_session.add(new_log)
+        db_session.commit()
+    except Exception as e:
+        print(f"SQL Save Error: {e}")
+    finally:
+        db_session.close()
+
+    # 2. HP計算
     current_hp = status.get("current_hp", 100) - damage
     stage = status.get("stage", 1)
     world = status.get("world", 1)
@@ -83,18 +114,12 @@ def attack_enemy(damage: int):
             world += 1
             stage = 1
             
-    new_status = {
-        "world": world,
-        "stage": stage,
-        "current_hp": current_hp,
-        "max_hp": max_hp
-    }
-    ref.set(new_status) # Firebaseを更新
+    new_status = {"world": world, "stage": stage, "current_hp": current_hp, "max_hp": max_hp}
+    ref.update(new_status)
     return new_status
 
 @app.post("/reset-game")
 def reset_game():
-    """Firebaseを初期状態にリセット"""
     try:
         ref = db.reference('game_status')
         initial_data = {"world": 1, "stage": 1, "current_hp": 100, "max_hp": 100}
@@ -103,18 +128,19 @@ def reset_game():
     except Exception as e:
         return {"error": str(e)}, 500
 
+@app.get("/battle-history")
+def get_battle_history():
+    """アプリの履歴画面用：直近50件の戦闘ログを返す"""
+    db_session = SessionLocal()
+    logs = db_session.query(BattleLog).order_by(BattleLog.created_at.desc()).limit(50).all()
+    db_session.close()
+    return logs
+
 @app.get("/check-firebase")
 def check_firebase():
     return {"firebase_data": db.reference('/sensor').get()}
 
-@app.get("/history")
-def get_history():
-    db_session = SessionLocal()
-    records = db_session.query(BreathHistory).order_by(BreathHistory.created_at.desc()).limit(100).all()
-    db_session.close()
-    return records
-
-# --- 4. 履歴保存スレッド (Firebase -> PostgreSQL) ---
+# --- 4. 履歴保存スレッド (Firebase -> PostgreSQL 生データ用) ---
 def save_to_postgres(data):
     if not data: return
     try:
@@ -134,67 +160,3 @@ def save_to_postgres(data):
 @app.on_event("startup")
 def startup_event():
     threading.Thread(target=lambda: db.reference('/sensor').listen(lambda event: save_to_postgres(event.data)), daemon=True).start()
-
-# --- 1. テーブル定義に追加 ---
-class BattleLog(Base):
-    __tablename__ = "battle_log"
-    id = Column(Integer, primary_key=True, index=True)
-    world = Column(Integer)
-    stage = Column(Integer)
-    damage = Column(Integer)
-    diff_percent = Column(Float)  # その時の汚れ除去率
-    created_at = Column(DateTime, default=datetime.datetime.now)
-
-# テーブル作成を実行（既存のテーブルは維持されます）
-Base.metadata.create_all(bind=engine)
-
-# --- 2. 攻撃エンドポイントを修正 ---
-@app.post("/attack")
-def attack_enemy(damage: int):
-    # Firebaseから現在のステータスを取得
-    ref = db.reference('game_status')
-    status = ref.get() or {"world": 1, "stage": 1, "current_hp": 100, "max_hp": 100}
-    
-    # --- 戦闘ログを PostgreSQL に保存 ---
-    db_session = SessionLocal()
-    try:
-        new_log = BattleLog(
-            world=status.get("world", 1),
-            stage=status.get("stage", 1),
-            damage=damage,
-            diff_percent=status.get("diff_percent", 0), # 必要ならセンサー値を取得
-            created_at=datetime.datetime.now()
-        )
-        db_session.add(new_log)
-        db_session.commit()
-    except Exception as e:
-        print(f"SQL Save Error: {e}")
-    finally:
-        db_session.close()
-
-    # --- 以下、これまでのHP計算とFirebase更新処理 ---
-    current_hp = status.get("current_hp", 100) - damage
-    stage = status.get("stage", 1)
-    world = status.get("world", 1)
-    max_hp = status.get("max_hp", 100)
-
-    if current_hp <= 0:
-        stage += 1
-        max_hp = 100 + (stage - 1) * 50
-        current_hp = max_hp
-        if stage > 5:
-            world += 1
-            stage = 1
-            
-    new_status = {"world": world, "stage": stage, "current_hp": current_hp, "max_hp": max_hp}
-    ref.set(new_status)
-    return new_status
-
-# --- 3. ログ取得用のエンドポイントを追加 ---
-@app.get("/battle-history")
-def get_battle_history():
-    db_session = SessionLocal()
-    # 直近50件の戦闘ログを取得
-    logs = db_session.query(BattleLog).order_by(BattleLog.created_at.desc()).limit(50).all()
-    db_session.close()
-    return logs
