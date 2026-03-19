@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:math' as math;
 
 class BattleScreen extends StatefulWidget {
   const BattleScreen({super.key});
@@ -8,25 +9,48 @@ class BattleScreen extends StatefulWidget {
   State<BattleScreen> createState() => _BattleScreenState();
 }
 
-class _BattleScreenState extends State<BattleScreen> {
-  // ステータス管理
+class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMixin {
   int world = 1;
   int stage = 1;
-  int enemyCurrentHp = 100;
+  int enemyCurrentHp = 85; 
   int enemyMaxHp = 100;
-  final int maxStage = 5;
-  
   double? beforeScore;
   bool isMeasuring = false;
+  bool isWalking = false; 
+  bool isDamaged = false; // ダメージ演出用フラグ
+
   final String apiUrl = "https://breath-checker-api-476724390420.asia-northeast1.run.app";
+  late AnimationController _pulupuluController;
 
   @override
   void initState() {
     super.initState();
-    _loadGameStatus(); // 起動時にセーブデータを読み込む
+    _loadGameStatus();
+    _pulupuluController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
   }
 
-  // --- API連携関数 ---
+  @override
+  void dispose() {
+    _pulupuluController.dispose();
+    super.dispose();
+  }
+
+  // --- デバッグ用：進捗リセット ---
+  Future<void> _resetGame() async {
+    try {
+      final res = await http.post(Uri.parse("$apiUrl/reset-game")); // APIにリセット用エンドポイントがあると想定
+      if (res.statusCode == 200) {
+        _loadGameStatus();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("進捗を初期化しました")));
+      }
+    } catch (e) {
+      // もしAPIになければローカルで初期値をセットして再読み込み
+      setState(() { world = 1; stage = 1; enemyCurrentHp = 100; });
+    }
+  }
 
   Future<void> _loadGameStatus() async {
     try {
@@ -40,138 +64,228 @@ class _BattleScreenState extends State<BattleScreen> {
           enemyMaxHp = data['max_hp'] ?? 100;
         });
       }
-    } catch (e) { print("読み込みエラー: $e"); }
+    } catch (e) { print(e); }
   }
 
-  // 本当のダメージを計算して攻撃する
   void _processAttack() async {
     setState(() => isMeasuring = true);
-    
     try {
-      // 1. 磨いた後の数値を取得
       final res = await http.get(Uri.parse("$apiUrl/check-firebase"));
       double afterScore = double.parse(json.decode(res.body)['firebase_data']['diff_percent'].toString());
-      
-      // 2. ダメージ計算 (磨く前 - 磨いた後) * 10
-      // 例: 40%から10%に減ったら 30 * 10 = 300ダメージ
       double diff = (beforeScore ?? 0) - afterScore;
-      int damage = diff > 0 ? (diff * 10).toInt() : 5; // 最低5ダメ
+      int damage = diff > 0 ? (diff * 10).toInt() : 5;
 
-      // 3. Pythonにダメージを送ってセーブ＆更新
+      // ダメージ演出開始（赤く光る）
+      setState(() => isDamaged = true);
+      Future.delayed(const Duration(milliseconds: 500), () => setState(() => isDamaged = false));
+
       final attackRes = await http.post(Uri.parse("$apiUrl/attack?damage=$damage"));
       if (attackRes.statusCode == 200) {
         final newData = json.decode(attackRes.body);
-        
         setState(() {
           enemyCurrentHp = newData['current_hp'];
-          stage = newData['stage'];
-          world = newData['world'];
-          enemyMaxHp = newData['max_hp'];
-          
-          _showResultDialog(diff, damage); // 何ダメ出たか表示！
-          beforeScore = null; 
+          if (enemyCurrentHp >= newData['max_hp'] && damage > 0) {
+            _startNextStageEffect(newData);
+          } else {
+            _showResultDialog(diff, damage);
+          }
+          beforeScore = null;
           isMeasuring = false;
         });
       }
-    } catch (e) {
-      print("攻撃エラー: $e");
-      setState(() => isMeasuring = false);
-    }
+    } catch (e) { setState(() => isMeasuring = false); }
   }
 
-  // --- UIウィジェット ---
+  void _startNextStageEffect(Map newData) async {
+    setState(() => isWalking = true);
+    await Future.delayed(const Duration(seconds: 2));
+    setState(() {
+      stage = newData['stage'];
+      world = newData['world'];
+      enemyMaxHp = newData['max_hp'];
+      enemyCurrentHp = newData['max_hp'];
+      isWalking = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    const shadowStyle = TextStyle(
+      color: Colors.white,
+      fontWeight: FontWeight.bold,
+      shadows: [Shadow(blurRadius: 12, color: Colors.black87, offset: Offset(2, 2))],
+    );
+
     return Scaffold(
-      appBar: AppBar(title: Text("ワールド $world")),
-      body: Column(
+      body: Stack(
         children: [
-          const SizedBox(height: 30),
-          _buildStageIndicator(), // 横軸インジケーター
-          const Spacer(),
-          Text("Stage $world-$stage", style: const TextStyle(fontSize: 18, color: Colors.grey)),
-          const Text("よごれモンスター", style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 10),
-          _buildHpBar(),
-          const SizedBox(height: 40),
-          // 敵の画像（stageに合わせて変える）
-          Image.asset('assets/monster_$stage.png', height: 220, 
-            errorBuilder: (context, error, stack) => const Icon(Icons.auto_fix_high, size: 100, color: Colors.purple)),
-          const Spacer(),
-          _buildActionButton(),
-          const SizedBox(height: 50),
-        ],
-      ),
-    );
-  }
-
-  // 横軸のステージ表示
-  Widget _buildStageIndicator() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 40),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Container(height: 2, color: Colors.grey[300]),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(maxStage, (index) {
-              int s = index + 1;
-              bool isCurrent = s == stage;
-              bool isCleared = s < stage;
-              return CircleAvatar(
-                radius: 12,
-                backgroundColor: isCurrent ? Colors.blue : (isCleared ? Colors.green : Colors.grey[300]),
-                child: isCleared 
-                  ? const Icon(Icons.check, size: 15, color: Colors.white)
-                  : Text('$s', style: const TextStyle(color: Colors.white, fontSize: 10)),
-              );
-            }),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHpBar() {
-    return Column(
-      children: [
-        Container(
-          width: 250, height: 15,
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.black12)),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: LinearProgressIndicator(
-              value: enemyCurrentHp / enemyMaxHp,
-              backgroundColor: Colors.grey[200],
-              valueColor: const AlwaysStoppedAnimation<Color>(Colors.redAccent),
+          // 背景 (.jpg)
+          AnimatedContainer(
+            duration: const Duration(seconds: 2),
+            curve: Curves.easeInOut,
+            decoration: BoxDecoration(
+              image: DecorationImage(
+                image: const AssetImage('assets/background_grass.jpg'),
+                fit: BoxFit.cover,
+                alignment: isWalking ? const Alignment(0.8, 0.0) : const Alignment(-0.8, 0.0),
+              ),
             ),
           ),
+          
+          SafeArea(
+            child: Column(
+              children: [
+                // 上部バーとリセットボタン
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const SizedBox(width: 40), // バランス用
+                      _buildTopStatus(shadowStyle),
+                      IconButton(
+                        icon: const Icon(Icons.delete_forever, color: Colors.white70),
+                        onPressed: _resetGame,
+                        tooltip: "デバッグ用リセット",
+                      ),
+                    ],
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
+                _buildHpBar(shadowStyle), // HPバーを上に配置
+                
+                const Spacer(), // ここで間を空ける
+                
+                if (isWalking) ...[
+                  const Icon(Icons.directions_walk, size: 80, color: Colors.white),
+                  Text("次の敵をさがしています...", style: shadowStyle.copyWith(fontSize: 20)),
+                  const SizedBox(height: 100),
+                ] else ...[
+                  _buildMonsterWithAnimation(), // モンスターを下に配置
+                ],
+                
+                const SizedBox(height: 20),
+                _buildBattleButtons(),
+                const SizedBox(height: 40),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonsterWithAnimation() {
+    return AnimatedBuilder(
+      animation: _pulupuluController,
+      builder: (context, child) {
+        double v = _pulupuluController.value;
+        double scaleX = 1.0;
+        double scaleY = 1.0;
+        
+        if (stage == 1) {
+          double anim = Curves.easeInOutSine.transform(v);
+          scaleY = 1.0 + (0.07 * anim);
+          scaleX = 1.0 - (0.07 * anim);
+        }
+
+        return Transform(
+          alignment: Alignment.bottomCenter,
+          transform: Matrix4.identity()..scale(scaleX, scaleY),
+          child: ColorFiltered(
+            // ダメージを受けた時に赤く光らせる演出
+            colorFilter: ColorFilter.mode(
+              isDamaged ? Colors.red.withOpacity(0.5) : Colors.transparent,
+              BlendMode.srcATop,
+            ),
+            child: Image.asset(
+              'assets/monster_$stage.png',
+              height: 220, // 少し大きくして存在感を出す
+              fit: BoxFit.contain,
+              errorBuilder: (c, e, s) => const Icon(Icons.adb, size: 100, color: Colors.white),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTopStatus(TextStyle style) {
+    return Column(
+      children: [
+        Text("WORLD $world", style: style.copyWith(fontSize: 22, letterSpacing: 2)),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(5, (i) {
+            int s = i + 1;
+            return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 6),
+              width: 35, height: 35,
+              decoration: BoxDecoration(
+                color: s == stage ? Colors.blueAccent : (s < stage ? Colors.green : Colors.black45),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: Center(child: Text("$s", style: style.copyWith(fontSize: 14))),
+            );
+          }),
         ),
-        Text('$enemyCurrentHp / $enemyMaxHp', style: const TextStyle(fontWeight: FontWeight.bold)),
       ],
     );
   }
 
-  Widget _buildActionButton() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 40),
-      child: beforeScore == null
-        ? ElevatedButton(
-            onPressed: isMeasuring ? null : () async {
-              setState(() => isMeasuring = true);
-              final res = await http.get(Uri.parse("$apiUrl/check-firebase"));
-              beforeScore = double.parse(json.decode(res.body)['firebase_data']['diff_percent'].toString());
-              setState(() => isMeasuring = false);
-            },
-            child: Text(isMeasuring ? "スキャン中..." : "1. 磨く前の汚れを測る"),
-          )
-        : ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white),
-            onPressed: isMeasuring ? null : _processAttack,
-            child: Text(isMeasuring ? "判定中..." : "2. 磨き終わった！攻撃！"),
+  Widget _buildHpBar(TextStyle style) {
+    return Column(
+      children: [
+        Container(
+          width: 280, height: 26,
+          decoration: BoxDecoration(
+            color: Colors.black45, 
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: Colors.white54),
           ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(13),
+                child: LinearProgressIndicator(
+                  value: enemyCurrentHp / enemyMaxHp,
+                  backgroundColor: Colors.transparent,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.redAccent),
+                ),
+              ),
+              Text('$enemyCurrentHp / $enemyMaxHp HP', style: style.copyWith(fontSize: 14)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBattleButtons() {
+    return SizedBox(
+      width: 320, height: 65,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: beforeScore == null ? Colors.white : Colors.orangeAccent,
+          foregroundColor: beforeScore == null ? Colors.blueGrey : Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(35)),
+          elevation: 10,
+        ),
+        onPressed: isMeasuring || isWalking ? null : (beforeScore == null ? () async {
+          setState(() => isMeasuring = true);
+          final res = await http.get(Uri.parse("$apiUrl/check-firebase"));
+          beforeScore = double.parse(json.decode(res.body)['firebase_data']['diff_percent'].toString());
+          setState(() => isMeasuring = false);
+        } : _processAttack),
+        child: Text(
+          isMeasuring ? "読み込み中..." : (beforeScore == null ? "1. 磨く前の汚れを測定" : "2. 磨き完了！こうげき！"),
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+      ),
     );
   }
 
@@ -179,8 +293,8 @@ class _BattleScreenState extends State<BattleScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("ナイス・ブレス！"),
-        content: Text("汚れを ${diff.toStringAsFixed(1)}% 浄化した！\n敵に $damage のダメージ！"),
+        title: const Text("結果"),
+        content: Text("汚れを ${diff.toStringAsFixed(1)}% 除去！\n$damage ダメージ！"),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK"))],
       ),
     );
