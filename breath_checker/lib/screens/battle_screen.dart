@@ -12,12 +12,15 @@ class BattleScreen extends StatefulWidget {
 class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMixin {
   int world = 1;
   int stage = 1;
-  int enemyCurrentHp = 85; 
+  int enemyCurrentHp = 100; 
   int enemyMaxHp = 100;
   double? beforeScore;
   bool isMeasuring = false;
   bool isWalking = false; 
-  bool isDamaged = false; // ダメージ演出用フラグ
+  bool isDamaged = false; 
+  bool isDefeated = false;
+  int lastDamage = 0;
+  bool showDamageText = false;
 
   final String apiUrl = "https://breath-checker-api-476724390420.asia-northeast1.run.app";
   late AnimationController _pulupuluController;
@@ -38,20 +41,58 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     super.dispose();
   }
 
-  // --- デバッグ用：進捗リセット ---
+  // --- デバッグ用：進捗リセット（ここをまるごと差し替え） ---
   Future<void> _resetGame() async {
-    try {
-      final res = await http.post(Uri.parse("$apiUrl/reset-game")); // APIにリセット用エンドポイントがあると想定
-      if (res.statusCode == 200) {
-        _loadGameStatus();
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("進捗を初期化しました")));
+    // 1. まず確認ダイアログを表示して、結果を confirm に入れる
+    bool? confirm = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("進捗リセット"),
+        content: const Text("サーバーのデータを初期化して、ステージ1に戻しますか？"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("キャンセル")),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text("リセットする")),
+        ],
+      ),
+    );
+
+    // 2. confirm が true（リセットボタン押下）の場合のみ実行
+    if (confirm == true) {
+      try {
+        print("Sending reset request to: $apiUrl/reset-game");
+        
+        // サーバーにリセットを命令
+        final res = await http.post(Uri.parse("$apiUrl/reset-game"));
+        
+        if (res.statusCode == 200) {
+          // 成功したらアプリの状態を整える
+          setState(() {
+            isDefeated = false;
+            isWalking = false;
+            beforeScore = null;
+          });
+          
+          // サーバーの反映を少し待ってから読み込む（保険）
+          await Future.delayed(const Duration(milliseconds: 500));
+          await _loadGameStatus(); 
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("サーバーと同期してリセット完了！"))
+          );
+        } else {
+          print("Server error: ${res.body}");
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("サーバー側でエラーが発生しました (${res.statusCode})"))
+          );
+        }
+      } catch (e) {
+        print("Connection error: $e");
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("通信エラー：APIが起動しているか確認してください"))
+        );
       }
-    } catch (e) {
-      // もしAPIになければローカルで初期値をセットして再読み込み
-      setState(() { world = 1; stage = 1; enemyCurrentHp = 100; });
     }
   }
-
   Future<void> _loadGameStatus() async {
     try {
       final res = await http.get(Uri.parse("$apiUrl/game-status"));
@@ -75,29 +116,44 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       double diff = (beforeScore ?? 0) - afterScore;
       int damage = diff > 0 ? (diff * 10).toInt() : 5;
 
-      // ダメージ演出開始（赤く光る）
-      setState(() => isDamaged = true);
-      Future.delayed(const Duration(milliseconds: 500), () => setState(() => isDamaged = false));
-
       final attackRes = await http.post(Uri.parse("$apiUrl/attack?damage=$damage"));
       if (attackRes.statusCode == 200) {
         final newData = json.decode(attackRes.body);
         setState(() {
-          enemyCurrentHp = newData['current_hp'];
-          if (enemyCurrentHp >= newData['max_hp'] && damage > 0) {
-            _startNextStageEffect(newData);
-          } else {
-            _showResultDialog(diff, damage);
-          }
-          beforeScore = null;
+          lastDamage = damage;
           isMeasuring = false;
         });
+        _showResultDialog(diff, damage, newData);
       }
     } catch (e) { setState(() => isMeasuring = false); }
   }
 
+  void _triggerDamageEffect(Map newData) async {
+    setState(() {
+      isDamaged = true;
+      showDamageText = true;
+      enemyCurrentHp = newData['current_hp'];
+    });
+
+    await Future.delayed(const Duration(milliseconds: 600));
+    setState(() {
+      isDamaged = false;
+      showDamageText = false;
+    });
+
+    if ((enemyCurrentHp >= newData['max_hp'] && lastDamage > 0) || enemyCurrentHp <= 0) {
+      setState(() => isDefeated = true);
+      await Future.delayed(const Duration(milliseconds: 1000));
+      _startNextStageEffect(newData);
+    }
+    beforeScore = null;
+  }
+
   void _startNextStageEffect(Map newData) async {
-    setState(() => isWalking = true);
+    setState(() {
+      isWalking = true;
+      isDefeated = false;
+    });
     await Future.delayed(const Duration(seconds: 2));
     setState(() {
       stage = newData['stage'];
@@ -119,7 +175,6 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     return Scaffold(
       body: Stack(
         children: [
-          // 背景 (.jpg)
           AnimatedContainer(
             duration: const Duration(seconds: 2),
             curve: Curves.easeInOut,
@@ -135,34 +190,31 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
           SafeArea(
             child: Column(
               children: [
-                // 上部バーとリセットボタン
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const SizedBox(width: 40), // バランス用
+                      const SizedBox(width: 40),
                       _buildTopStatus(shadowStyle),
                       IconButton(
-                        icon: const Icon(Icons.delete_forever, color: Colors.white70),
+                        icon: const Icon(Icons.refresh, color: Colors.white, size: 30),
                         onPressed: _resetGame,
-                        tooltip: "デバッグ用リセット",
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(height: 10),
+                _buildHpBar(shadowStyle),
                 
-                const SizedBox(height: 20),
-                _buildHpBar(shadowStyle), // HPバーを上に配置
-                
-                const Spacer(), // ここで間を空ける
+                const Spacer(),
                 
                 if (isWalking) ...[
                   const Icon(Icons.directions_walk, size: 80, color: Colors.white),
                   Text("次の敵をさがしています...", style: shadowStyle.copyWith(fontSize: 20)),
                   const SizedBox(height: 100),
                 ] else ...[
-                  _buildMonsterWithAnimation(), // モンスターを下に配置
+                  _buildMonsterWithAnimation(shadowStyle),
                 ],
                 
                 const SizedBox(height: 20),
@@ -176,38 +228,67 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     );
   }
 
-  Widget _buildMonsterWithAnimation() {
-    return AnimatedBuilder(
-      animation: _pulupuluController,
-      builder: (context, child) {
-        double v = _pulupuluController.value;
-        double scaleX = 1.0;
-        double scaleY = 1.0;
-        
-        if (stage == 1) {
-          double anim = Curves.easeInOutSine.transform(v);
-          scaleY = 1.0 + (0.07 * anim);
-          scaleX = 1.0 - (0.07 * anim);
-        }
-
-        return Transform(
-          alignment: Alignment.bottomCenter,
-          transform: Matrix4.identity()..scale(scaleX, scaleY),
-          child: ColorFiltered(
-            // ダメージを受けた時に赤く光らせる演出
-            colorFilter: ColorFilter.mode(
-              isDamaged ? Colors.red.withOpacity(0.5) : Colors.transparent,
-              BlendMode.srcATop,
-            ),
-            child: Image.asset(
-              'assets/monster_$stage.png',
-              height: 220, // 少し大きくして存在感を出す
-              fit: BoxFit.contain,
-              errorBuilder: (c, e, s) => const Icon(Icons.adb, size: 100, color: Colors.white),
+  Widget _buildMonsterWithAnimation(TextStyle shadowStyle) {
+    return Stack(
+      alignment: Alignment.bottomCenter,
+      clipBehavior: Clip.none,
+      children: [
+        AnimatedOpacity(
+          opacity: isDefeated ? 0.0 : 1.0,
+          duration: const Duration(milliseconds: 800),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 800),
+            transform: Matrix4.translationValues(0, isDefeated ? -100 : 0, 0),
+            child: AnimatedBuilder(
+              animation: _pulupuluController,
+              builder: (context, child) {
+                double v = _pulupuluController.value;
+                double scaleX = 1.0;
+                double scaleY = 1.0;
+                if (stage == 1) {
+                  double anim = Curves.easeInOutSine.transform(v);
+                  scaleY = 1.0 + (0.07 * anim);
+                  scaleX = 1.0 - (0.07 * anim);
+                }
+                return Transform(
+                  alignment: Alignment.bottomCenter,
+                  transform: Matrix4.identity()..scale(scaleX, scaleY),
+                  child: ColorFiltered(
+                    colorFilter: ColorFilter.mode(
+                      isDamaged ? Colors.red.withOpacity(0.6) : (isDefeated ? Colors.white.withOpacity(0.8) : Colors.transparent),
+                      BlendMode.srcATop,
+                    ),
+                    child: Image.asset('assets/monster_$stage.png', height: 220, fit: BoxFit.contain),
+                  ),
+                );
+              },
             ),
           ),
-        );
-      },
+        ),
+        
+        if (showDamageText)
+          Positioned(
+            top: -50,
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.0, end: -60.0),
+              duration: const Duration(milliseconds: 600),
+              builder: (context, value, child) {
+                return Transform.translate(
+                  offset: Offset(0, value),
+                  child: Text(
+                    "-$lastDamage",
+                    style: const TextStyle(
+                      fontSize: 48,
+                      color: Colors.redAccent,
+                      fontWeight: FontWeight.w900, // Error: .black ではなく .w900 に修正済み
+                      shadows: [Shadow(blurRadius: 4, color: Colors.black, offset: Offset(2, 2))],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 
@@ -240,24 +321,25 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     return Column(
       children: [
         Container(
-          width: 280, height: 26,
+          width: 340, // ロング化
+          height: 30, // 厚型
           decoration: BoxDecoration(
-            color: Colors.black45, 
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: Colors.white54),
+            color: Colors.black54, 
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: Colors.white70, width: 2),
           ),
           child: Stack(
             alignment: Alignment.center,
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(13),
+                borderRadius: BorderRadius.circular(15),
                 child: LinearProgressIndicator(
                   value: enemyCurrentHp / enemyMaxHp,
                   backgroundColor: Colors.transparent,
                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.redAccent),
                 ),
               ),
-              Text('$enemyCurrentHp / $enemyMaxHp HP', style: style.copyWith(fontSize: 14)),
+              Text('$enemyCurrentHp / $enemyMaxHp HP', style: style.copyWith(fontSize: 16)),
             ],
           ),
         ),
@@ -275,27 +357,36 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(35)),
           elevation: 10,
         ),
-        onPressed: isMeasuring || isWalking ? null : (beforeScore == null ? () async {
+        onPressed: isMeasuring || isWalking || isDefeated ? null : (beforeScore == null ? () async {
           setState(() => isMeasuring = true);
           final res = await http.get(Uri.parse("$apiUrl/check-firebase"));
           beforeScore = double.parse(json.decode(res.body)['firebase_data']['diff_percent'].toString());
           setState(() => isMeasuring = false);
         } : _processAttack),
         child: Text(
-          isMeasuring ? "読み込み中..." : (beforeScore == null ? "1. 磨く前の汚れを測定" : "2. 磨き完了！こうげき！"),
+          isMeasuring ? "測定中..." : (beforeScore == null ? "1. 磨く前の汚れを測定" : "2. 磨き完了！こうげき！"),
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
       ),
     );
   }
 
-  void _showResultDialog(double diff, int damage) {
+  void _showResultDialog(double diff, int damage, Map newData) {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text("結果"),
-        content: Text("汚れを ${diff.toStringAsFixed(1)}% 除去！\n$damage ダメージ！"),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK"))],
+        title: const Text("ブラッシング完了！"),
+        content: Text("汚れを ${diff.toStringAsFixed(1)}% 除去した！\nスライムに $damage のダメージ！"),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _triggerDamageEffect(newData);
+            }, 
+            child: const Text("OK", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))
+          )
+        ],
       ),
     );
   }
