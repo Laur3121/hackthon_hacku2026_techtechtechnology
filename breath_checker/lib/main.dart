@@ -28,7 +28,7 @@ class ToothbrushBattleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '歯磨きバトル',
+      title: '口臭王者歯磨キング',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
