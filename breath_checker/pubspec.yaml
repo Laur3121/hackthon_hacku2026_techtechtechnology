@@ -69,6 +69,7 @@ flutter:
     - assets/monster_2.png
     - assets/monster_3.png
     - assets/monster_4.png
+    - assets/monster_5.png
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

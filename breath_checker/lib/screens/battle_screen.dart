@@ -22,6 +22,25 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
   int lastDamage = 0;
   bool showDamageText = false;
 
+  final List<String> monsterNames = [
+    "スライム",     // stage 1
+    "ミミック",     // stage 2
+    "ミニドラゴン",     // stage 3
+    "ミドルドラゴン",   // stage 4
+    "ビッグドラゴン",   // stage 5
+  ];
+
+  String get currentMonsterName {
+    // stageは1から始まるため、配列のインデックス（0から始まる）に合わせるために -1 します
+    int index = stage - 1;
+    // 用意した配列の数よりステージが進んでしまった場合の安全対策（エラー回避）
+    if (index >= 0 && index < monsterNames.length) {
+      return monsterNames[index];
+    } else {
+      return "ункноwн монстер"; // 用意した数を超えた場合のデフォルト名
+    }
+  }
+
   final String apiUrl = "https://breath-checker-api-476724390420.asia-northeast1.run.app";
   late AnimationController _pulupuluController;
 
@@ -108,13 +127,15 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     } catch (e) { print(e); }
   }
 
+  // 攻撃関係
   void _processAttack() async {
     setState(() => isMeasuring = true);
     try {
       final res = await http.get(Uri.parse("$apiUrl/check-firebase"));
       double afterScore = double.parse(json.decode(res.body)['firebase_data']['diff_percent'].toString());
       double diff = (beforeScore ?? 0) - afterScore;
-      int damage = diff > 0 ? (diff * 10).toInt() : 5;
+      // int damage = diff>0 ? diff*beforeScore.toInt() : 5;
+      int damage= 10000;
 
       final attackRes = await http.post(Uri.parse("$apiUrl/attack?damage=$damage"));
       if (attackRes.statusCode == 200) {
@@ -211,7 +232,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
                 
                 if (isWalking) ...[
                   const Icon(Icons.directions_walk, size: 80, color: Colors.white),
-                  Text("次の敵をさがしています...", style: shadowStyle.copyWith(fontSize: 20)),
+                  Text("次のモンスターをさがしています...", style: shadowStyle.copyWith(fontSize: 20)),
                   const SizedBox(height: 100),
                 ] else ...[
                   _buildMonsterWithAnimation(shadowStyle),
@@ -238,7 +259,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
           duration: const Duration(milliseconds: 800),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 800),
-            transform: Matrix4.translationValues(0, isDefeated ? -100 : 0, 0),
+            transform: Matrix4.translationValues(0.0, isDefeated ? -100.0 : 0.0, 0.0),
             child: AnimatedBuilder(
               animation: _pulupuluController,
               builder: (context, child) {
@@ -377,7 +398,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text("ブラッシング完了！"),
-        content: Text("汚れを ${diff.toStringAsFixed(1)}% 除去した！\nスライムに $damage のダメージ！"),
+        content: Text("汚れを ${diff.toStringAsFixed(1)}% 除去した！\n$currentMonsterName に $damage のダメージ！"),
         actions: [
           TextButton(
             onPressed: () {
