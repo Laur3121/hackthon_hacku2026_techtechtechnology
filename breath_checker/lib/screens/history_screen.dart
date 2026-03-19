@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -28,13 +29,23 @@ class _HistoryScreenState extends State<HistoryScreen> {
   // PostgreSQLから戦闘ログを取得
   Future<void> _fetchBattleHistory() async {
     try {
-      final res = await http.get(Uri.parse("$apiUrl/battle-history"));
+      // 1. 現在のユーザーIDを取得
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        print("ログインユーザーが見つかりません");
+        return;
+      }
+
+      // 2. URLの末尾にUIDを付ける (ここが重要！)
+      final res = await http.get(Uri.parse("$apiUrl/battle-history/${user.uid}"));
+      
       if (res.statusCode == 200) {
         setState(() {
           battleLogs = json.decode(res.body);
           isLoading = false;
         });
       } else {
+        print("Server Error: ${res.statusCode}");
         throw Exception("Failed to load history");
       }
     } catch (e) {

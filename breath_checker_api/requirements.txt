@@ -3,3 +3,4 @@ uvicorn[standard]
 firebase-admin
 psycopg2-binary
 sqlalchemy
+pydantic

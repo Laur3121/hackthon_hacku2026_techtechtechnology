@@ -1,19 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart'; // これは lib 直下にあるはずです
+import 'package:firebase_auth/firebase_auth.dart'; // ← ★これが必要
+import 'firebase_options.dart'; 
 import 'screens/home_screen.dart';
 import 'screens/measure_screen.dart';
 import 'screens/battle_screen.dart';
 import 'screens/history_screen.dart';
+import 'screens/login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  runApp(const ToothbrushBattleApp());
+  
+  // 現在のユーザーを取得
+  final user = FirebaseAuth.instance.currentUser;
+
+  runApp(ToothbrushBattleApp(
+    // ログイン済みなら '/home'、未ログインなら '/'
+    initialRoute: user == null ? '/' : '/home', 
+  ));
 }
 
 class ToothbrushBattleApp extends StatelessWidget {
-  const ToothbrushBattleApp({super.key});
+  final String initialRoute; 
+  const ToothbrushBattleApp({super.key, required this.initialRoute});
 
   @override
   Widget build(BuildContext context) {
@@ -23,12 +33,14 @@ class ToothbrushBattleApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      initialRoute: '/',
+      // ★重複していた 'initialRoute: "/",' を削除し、コンストラクタから受け取ったものだけを使用
+      initialRoute: initialRoute, 
       routes: {
-        '/': (context) => const HomeScreen(),
-        '/battle': (context) => BattleScreen(),   // constを外す
-        '/measure': (context) => MeasureScreen(), // constを外す
-        '/history': (context) => HistoryScreen(), // constを外す
+        '/': (context) => const LoginScreen(),
+        '/home': (context) => const HomeScreen(), // もし赤線が出るなら const を外してください
+        '/battle': (context) => const BattleScreen(),   
+        '/measure': (context) => const MeasureScreen(), 
+        '/history': (context) => const HistoryScreen(), 
       },
       debugShowCheckedModeBanner: false,
     );

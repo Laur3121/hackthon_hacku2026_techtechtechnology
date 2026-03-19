@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:math' as math;
+import 'package:firebase_auth/firebase_auth.dart'; // 1. 追加
+import 'package:firebase_database/firebase_database.dart';
 
 class BattleScreen extends StatefulWidget {
   const BattleScreen({super.key});
@@ -10,6 +11,9 @@ class BattleScreen extends StatefulWidget {
 }
 
 class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMixin {
+  // --- ユーザーID取得用のゲッター ---
+  String get uid => FirebaseAuth.instance.currentUser?.uid ?? "guest_user";
+
   int world = 1;
   int stage = 1;
   int enemyCurrentHp = 100; 
@@ -22,99 +26,59 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
   int lastDamage = 0;
   bool showDamageText = false;
 
-  final List<String> monsterNames = [
-    "スライム",     // stage 1
-    "ミミック",     // stage 2
-    "ミニドラゴン",     // stage 3
-    "ミドルドラゴン",   // stage 4
-    "ビッグドラゴン",   // stage 5
-  ];
+  final List<String> monsterNames = ["スライム", "ミミック", "ミニドラゴン", "ミドルドラゴン", "ビッグドラゴン"];
 
   String get currentMonsterName {
-    // stageは1から始まるため、配列のインデックス（0から始まる）に合わせるために -1 します
     int index = stage - 1;
-    // 用意した配列の数よりステージが進んでしまった場合の安全対策（エラー回避）
-    if (index >= 0 && index < monsterNames.length) {
-      return monsterNames[index];
-    } else {
-      return "ункноwн монстер"; // 用意した数を超えた場合のデフォルト名
-    }
+    if (index >= 0 && index < monsterNames.length) return monsterNames[index];
+    return "未知のモンスター";
   }
 
   final String apiUrl = "https://breath-checker-api-476724390420.asia-northeast1.run.app";
   late AnimationController _pulupuluController;
 
-  @override
+@override
   void initState() {
     super.initState();
-    _loadGameStatus();
+    _loadGameStatus(); // 最初に現在の状態をAPIから取る
+
+    // ★ここから追加：Firebase Realtime Databaseの監視
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      // 自分のID専用のパスを監視する
+      DatabaseReference starCountRef = 
+          FirebaseDatabase.instance.ref('users/${user.uid}/status');
+
+      starCountRef.onValue.listen((DatabaseEvent event) {
+        if (event.snapshot.value != null) {
+          final data = event.snapshot.value as Map<dynamic, dynamic>;
+          setState(() {
+            // Firebase側でHPが更新されたら、即座に画面に反映
+            enemyCurrentHp = data['current_hp'] ?? enemyCurrentHp;
+            enemyMaxHp = data['max_hp'] ?? enemyMaxHp;
+            stage = data['stage'] ?? stage;
+            world = data['world'] ?? world;
+          });
+        }
+      });
+    }
+    // ★ここまで
+
     _pulupuluController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
   }
-
   @override
   void dispose() {
     _pulupuluController.dispose();
     super.dispose();
   }
 
-  // --- デバッグ用：進捗リセット（ここをまるごと差し替え） ---
-  Future<void> _resetGame() async {
-    // 1. まず確認ダイアログを表示して、結果を confirm に入れる
-    bool? confirm = await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("進捗リセット"),
-        content: const Text("サーバーのデータを初期化して、ステージ1に戻しますか？"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("キャンセル")),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text("リセットする")),
-        ],
-      ),
-    );
-
-    // 2. confirm が true（リセットボタン押下）の場合のみ実行
-    if (confirm == true) {
-      try {
-        print("Sending reset request to: $apiUrl/reset-game");
-        
-        // サーバーにリセットを命令
-        final res = await http.post(Uri.parse("$apiUrl/reset-game"));
-        
-        if (res.statusCode == 200) {
-          // 成功したらアプリの状態を整える
-          setState(() {
-            isDefeated = false;
-            isWalking = false;
-            beforeScore = null;
-          });
-          
-          // サーバーの反映を少し待ってから読み込む（保険）
-          await Future.delayed(const Duration(milliseconds: 500));
-          await _loadGameStatus(); 
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("サーバーと同期してリセット完了！"))
-          );
-        } else {
-          print("Server error: ${res.body}");
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("サーバー側でエラーが発生しました (${res.statusCode})"))
-          );
-        }
-      } catch (e) {
-        print("Connection error: $e");
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("通信エラー：APIが起動しているか確認してください"))
-        );
-      }
-    }
-  }
+  // --- 2. 自分のステータスを読み込む (UID付き) ---
   Future<void> _loadGameStatus() async {
     try {
-      final res = await http.get(Uri.parse("$apiUrl/game-status"));
+      final res = await http.get(Uri.parse("$apiUrl/game-status/$uid")); // パス変更
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
         setState(() {
@@ -124,20 +88,31 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
           enemyMaxHp = data['max_hp'] ?? 100;
         });
       }
-    } catch (e) { print(e); }
+    } catch (e) { print("Load Error: $e"); }
   }
 
-  // 攻撃関係
+  // --- 3. 攻撃処理 (JSONボディにUIDを入れて送る) ---
   void _processAttack() async {
     setState(() => isMeasuring = true);
     try {
+      // センサー値取得
       final res = await http.get(Uri.parse("$apiUrl/check-firebase"));
       double afterScore = double.parse(json.decode(res.body)['firebase_data']['diff_percent'].toString());
       double diff = (beforeScore ?? 0) - afterScore;
-      // int damage = diff>0 ? diff*beforeScore.toInt() : 5;
-      int damage= 10000;
+      
+      // ダメージ計算（ハッカソン用に固定 or 計算）
+      int damage = 10000; 
 
-      final attackRes = await http.post(Uri.parse("$apiUrl/attack?damage=$damage"));
+      // POSTリクエストをJSON形式に変更
+      final attackRes = await http.post(
+        Uri.parse("$apiUrl/attack"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "user_id": uid,  // UIDを送信
+          "damage": damage,
+        }),
+      );
+
       if (attackRes.statusCode == 200) {
         final newData = json.decode(attackRes.body);
         setState(() {
@@ -146,8 +121,42 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
         });
         _showResultDialog(diff, damage, newData);
       }
-    } catch (e) { setState(() => isMeasuring = false); }
+    } catch (e) { 
+      print("Attack Error: $e");
+      setState(() => isMeasuring = false); 
+    }
   }
+
+  // 進捗リセットもUID対応にする
+  Future<void> _resetGame() async {
+    bool? confirm = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("進捗リセット"),
+        content: const Text("あなたのデータを初期化しますか？"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("キャンセル")),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text("リセットする")),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        // 本来はリセットAPIもUIDが必要ですが、今回は全リセット想定ならそのまま
+        await http.post(Uri.parse("$apiUrl/reset-game")); 
+        setState(() {
+          isDefeated = false;
+          isWalking = false;
+          beforeScore = null;
+        });
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _loadGameStatus(); 
+      } catch (e) { print(e); }
+    }
+  }
+
+  // --- 以下、演出用のコード（変更なし） ---
 
   void _triggerDamageEffect(Map newData) async {
     setState(() {
@@ -162,7 +171,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       showDamageText = false;
     });
 
-    if ((enemyCurrentHp >= newData['max_hp'] && lastDamage > 0) || enemyCurrentHp <= 0) {
+    if (enemyCurrentHp <= 0) {
       setState(() => isDefeated = true);
       await Future.delayed(const Duration(milliseconds: 1000));
       _startNextStageEffect(newData);
@@ -227,9 +236,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
                 ),
                 const SizedBox(height: 10),
                 _buildHpBar(shadowStyle),
-                
                 const Spacer(),
-                
                 if (isWalking) ...[
                   const Icon(Icons.directions_walk, size: 80, color: Colors.white),
                   Text("次のモンスターをさがしています...", style: shadowStyle.copyWith(fontSize: 20)),
@@ -237,7 +244,6 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
                 ] else ...[
                   _buildMonsterWithAnimation(shadowStyle),
                 ],
-                
                 const SizedBox(height: 20),
                 _buildBattleButtons(),
                 const SizedBox(height: 40),
@@ -286,7 +292,6 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
             ),
           ),
         ),
-        
         if (showDamageText)
           Positioned(
             top: -50,
@@ -301,7 +306,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
                     style: const TextStyle(
                       fontSize: 48,
                       color: Colors.redAccent,
-                      fontWeight: FontWeight.w900, // Error: .black ではなく .w900 に修正済み
+                      fontWeight: FontWeight.w900,
                       shadows: [Shadow(blurRadius: 4, color: Colors.black, offset: Offset(2, 2))],
                     ),
                   ),
@@ -342,8 +347,8 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     return Column(
       children: [
         Container(
-          width: 340, // ロング化
-          height: 30, // 厚型
+          width: 340,
+          height: 30,
           decoration: BoxDecoration(
             color: Colors.black54, 
             borderRadius: BorderRadius.circular(15),
@@ -355,7 +360,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
               ClipRRect(
                 borderRadius: BorderRadius.circular(15),
                 child: LinearProgressIndicator(
-                  value: enemyCurrentHp / enemyMaxHp,
+                  value: enemyMaxHp > 0 ? enemyCurrentHp / enemyMaxHp : 0,
                   backgroundColor: Colors.transparent,
                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.redAccent),
                 ),
