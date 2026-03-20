@@ -84,6 +84,9 @@ class AttackRequest(BaseModel):
     user_id: str
     damage: int
 
+class ResetRequest(BaseModel):
+    user_id: str
+
 def get_db():
     db_session = SessionLocal()
     try:
@@ -161,9 +164,25 @@ def attack_enemy(req: AttackRequest, db_session: Session = Depends(get_db)):
     return new_status_dict
 
 @app.post("/reset-game")
-def reset_game():
-    """今回は全ユーザー共通の game_status ではなく個別の初期化が必要なら拡張可能"""
-    # 簡易版：とりあえず成功を返す
+def reset_game(req: ResetRequest, db_session: Session = Depends(get_db)):
+    """個別のユーザーのデータを初期化します"""
+    status = db_session.query(UserGameStatus).filter(UserGameStatus.user_id == req.user_id).first()
+    if status:
+        status.world = 1
+        status.stage = 1
+        status.max_hp = 100
+        status.current_hp = 100
+        status.updated_at = datetime.datetime.now()
+        db_session.commit()
+        
+        # Firebase RTDB同期もリセット
+        ref = db.reference(f'users/{req.user_id}/status')
+        ref.update({
+            "world": 1,
+            "stage": 1,
+            "current_hp": 100,
+            "max_hp": 100
+        })
     return {"message": "Success"}
 
 @app.get("/battle-history/{user_id}")

@@ -275,7 +275,11 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     if (confirm == true) {
       try {
         // 全リセットAPIをコール
-        final res = await http.post(Uri.parse("$apiUrl/reset-game"));
+        final res = await http.post(
+          Uri.parse("$apiUrl/reset-game"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({"user_id": uid}),
+        );
         if (res.statusCode == 200) {
           _loadGameStatus();
           if (mounted) {
