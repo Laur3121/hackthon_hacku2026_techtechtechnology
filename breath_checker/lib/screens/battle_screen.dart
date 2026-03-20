@@ -134,8 +134,9 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       double diff = (beforeScore ?? 0) - afterScore;
       
       // ダメージ計算：減少率 × 係数
-      int damage = (diff * beforeScore!).toInt(); 
-      if (damage < 10) damage = 1000; 
+      int damage = (diff * beforeScore! / 10).toInt(); 
+      // if (damage < 10) damage = 1000; 
+      if (damage < 10) damage = 10;
 
       final attackRes = await http.post(
         Uri.parse("$apiUrl/attack"),
