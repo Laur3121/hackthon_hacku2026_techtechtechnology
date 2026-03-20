@@ -25,6 +25,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
   bool isDefeated = false;
   int lastDamage = 0;
   bool showDamageText = false;
+  bool isAnimatingAttack = false;
   
   int countdown = 0;
   String measuringStatus = "";
@@ -58,7 +59,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       starCountRef.onValue.listen((DatabaseEvent event) {
         if (event.snapshot.value != null) {
           final data = event.snapshot.value as Map<dynamic, dynamic>;
-          if (mounted) {
+          if (mounted && !isAnimatingAttack) {
             setState(() {
               enemyCurrentHp = data['current_hp'] ?? enemyCurrentHp;
               enemyMaxHp = data['max_hp'] ?? enemyMaxHp;
@@ -123,14 +124,17 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
   }
 
   void _processAttack() async {
-    setState(() => measuringStatus = "ダメージ計算中...");
+    setState(() {
+      measuringStatus = "ダメージ計算中...";
+      isAnimatingAttack = true;
+    });
     try {
       final res = await http.get(Uri.parse("$apiUrl/check-firebase"));
       double afterScore = double.parse(json.decode(res.body)['firebase_data']['diff_percent'].toString());
       double diff = (beforeScore ?? 0) - afterScore;
       
       // ダメージ計算：減少率 × 係数
-      int damage = (diff * 60).toInt(); 
+      int damage = (diff * beforeScore!).toInt(); 
       if (damage < 10) damage = 1000; 
 
       final attackRes = await http.post(
@@ -171,10 +175,16 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
   }
 
   void _triggerDamageEffect(Map newData) async {
+    bool died = (enemyCurrentHp - lastDamage) <= 0;
+
     setState(() {
       isDamaged = true;
       showDamageText = true;
-      enemyCurrentHp = newData['current_hp'];
+      if (!died) {
+        enemyCurrentHp = newData['current_hp'] ?? enemyCurrentHp;
+      } else {
+        enemyCurrentHp = 0;
+      }
     });
 
     await Future.delayed(const Duration(milliseconds: 600));
@@ -183,11 +193,13 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       showDamageText = false;
     });
 
-    if (enemyCurrentHp <= 0) {
+    if (died) {
       setState(() => isDefeated = true);
       _ascentController.forward(); // 昇天アニメーション
       await Future.delayed(const Duration(seconds: 2));
       _startNextStageEffect(newData);
+    } else {
+      setState(() => isAnimatingAttack = false);
     }
     beforeScore = null;
   }
@@ -203,6 +215,7 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
       enemyCurrentHp = newData['max_hp'];
       isWalking = false;
       isDefeated = false;
+      isAnimatingAttack = false;
     });
   }
 
@@ -243,6 +256,40 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     );
   }
 
+  Future<void> _resetGame() async {
+    bool? confirm = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("データを初期化"),
+        content: const Text("ゲームの進捗を最初からやり直しますか？"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("キャンセル")),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true), 
+            child: const Text("はい", style: TextStyle(color: Colors.redAccent))
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        // 全リセットAPIをコール
+        final res = await http.post(Uri.parse("$apiUrl/reset-game"));
+        if (res.statusCode == 200) {
+          _loadGameStatus();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("進捗を初期化しました", style: TextStyle(color: Colors.white)))
+            );
+          }
+        }
+      } catch (e) {
+        print("Reset error: $e");
+      }
+    }
+  }
+
   Widget _buildBattleUI() {
     const shadowStyle = TextStyle(
       color: Colors.white,
@@ -251,21 +298,34 @@ class _BattleScreenState extends State<BattleScreen> with TickerProviderStateMix
     );
 
     return SafeArea(
-      child: Column(
+      child: Stack(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: _buildTopStatus(shadowStyle),
+          Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: _buildTopStatus(shadowStyle),
+              ),
+              _buildHpBar(shadowStyle),
+              const Spacer(),
+              if (isWalking) 
+                _buildWalkingInfo(shadowStyle)
+              else 
+                _buildMonsterDisplay(shadowStyle),
+              const SizedBox(height: 20),
+              _buildBattleButtons(),
+              const SizedBox(height: 40),
+            ],
           ),
-          _buildHpBar(shadowStyle),
-          const Spacer(),
-          if (isWalking) 
-            _buildWalkingInfo(shadowStyle)
-          else 
-            _buildMonsterDisplay(shadowStyle),
-          const SizedBox(height: 20),
-          _buildBattleButtons(),
-          const SizedBox(height: 40),
+          Positioned(
+            top: 20,
+            right: 20,
+            child: IconButton(
+              icon: const Icon(Icons.refresh, color: Colors.white, size: 30),
+              tooltip: "データを初期化",
+              onPressed: _resetGame,
+            ),
+          ),
         ],
       ),
     );
@@ -307,7 +367,7 @@ Widget _buildMonsterDisplay(TextStyle shadowStyle) {
                         ),
                         child: Image.asset(
                           'assets/monster_$stage.png', 
-                          height: 220,
+                          height: stage == 5 ? 400 : 220,
                           fit: BoxFit.contain,
                         ),
                       ),
